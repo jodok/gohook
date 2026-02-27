@@ -20,9 +20,9 @@
 # Gmail account to watch
 account: user@example.com
 
-# gog client name for this account (see ~/Library/Application Support/gogcli/)
-# Set this explicitly — gohook will try to derive it from the domain if not set.
-gog_client: myclient
+# gog client name — only needed if you use gog for token export (legacy)
+# If using gohook's own OAuth (recommended, via --auth), leave this unset.
+# gog_client: myclient
 
 pubsub:
   project_id: your-gcp-project-id
@@ -54,8 +54,8 @@ watch:
   renew_interval_hours: 168
 
 oauth:
-  # Path to gog client credentials file (client_id + client_secret)
-  # Default: ~/Library/Application Support/gogcli/credentials-{gog_client}.json
-  credentials_file: ~/Library/Application Support/gogcli/credentials-myclient.json
-  # Where to store the OAuth token (created by --auth)
+  # Path to the OAuth client credentials file (client_id + client_secret)
+  # Download from Google Cloud Console → APIs & Services → Credentials → OAuth 2.0 Client
+  credentials_file: ~/path/to/client_credentials.json
+  # Where gohook stores its token (created once via: python gohook.py --auth)
   token_file: ~/.gohook_token.json
