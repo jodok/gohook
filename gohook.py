@@ -91,7 +91,19 @@ def run_auth_flow(cfg: dict) -> None:
         print("Set oauth.credentials_file in config.yaml or ensure the gog credentials file exists.")
         sys.exit(1)
 
-    flow = InstalledAppFlow.from_client_secrets_file(creds_file, SCOPES)
+    raw = json.load(open(creds_file))
+    # gog stores bare {client_id, client_secret}; wrap into InstalledAppFlow format
+    if "installed" not in raw and "web" not in raw:
+        client_config = {"installed": {
+            "client_id": raw["client_id"],
+            "client_secret": raw["client_secret"],
+            "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+            "token_uri": "https://oauth2.googleapis.com/token",
+            "redirect_uris": ["http://localhost"],
+        }}
+    else:
+        client_config = raw
+    flow = InstalledAppFlow.from_client_config(client_config, SCOPES)
     creds = flow.run_local_server(port=0)
 
     with open(token_file, "w") as f:
