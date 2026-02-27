@@ -10,7 +10,7 @@ Gmail Pub/Sub daemon — watches a Gmail account via Google Cloud Pub/Sub and fi
 4. Matches changes against configured triggers
 5. Renders a payload template and POSTs to your webhook URL
 
-Auth reuses [gog](https://github.com/jodok/gog) OAuth2 tokens — no separate Google auth setup needed.
+Auth reuses [gog](https://github.com/steipete/gog) OAuth2 tokens — no separate Google auth setup needed.
 
 ---
 

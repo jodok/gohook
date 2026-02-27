@@ -1,0 +1,5 @@
+.venv/
+config.yaml
+*.pyc
+__pycache__/
+.gohook_state.json

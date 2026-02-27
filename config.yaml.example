@@ -15,7 +15,12 @@
 # ─────────────────────────────────────────────────────────────────────────────
 
 # Gmail account to watch
-account: jodok.batlogg@pina.earth
+account: user@example.com
+
+# gog client name for this account (see ~/.config/gog/ or ~/Library/Application Support/gogcli/)
+# Set this explicitly — gohook will try to derive it from the domain if not set,
+# but the derived name may not match your actual gog client identifier.
+gog_client: myclient
 
 pubsub:
   # GCP project that owns the Pub/Sub topic
@@ -43,7 +48,7 @@ triggers:
         {
           "message": "Green-flagged email — handle this:\nFrom: {{from}}\nSubject: {{subject}}\n\n{{body}}",
           "name": "Gmail",
-          "agentId": "main"
+          "agentId": "YOUR_AGENT_ID"
         }
 
   # Example: trigger on any starred email (yellow star)
@@ -59,7 +64,7 @@ triggers:
   #       {
   #         "message": "Starred email:\nFrom: {{from}}\nSubject: {{subject}}\n\n{{body}}",
   #         "name": "Gmail",
-  #         "agentId": "main"
+  #         "agentId": "YOUR_AGENT_ID"
   #       }
 
 watch:

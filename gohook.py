@@ -60,24 +60,26 @@ def save_state(state: dict) -> None:
 
 # ─── auth ─────────────────────────────────────────────────────────────────────
 
-CLIENT_MAP = {
-    "pina.earth": "pina",
-    "batlogg.com": "btlg",
-}
-
 SCOPES = [
     "https://www.googleapis.com/auth/gmail.readonly",
     "https://www.googleapis.com/auth/pubsub",
 ]
 
 
-def _client_name(email: str) -> str:
-    domain = email.split("@")[1]
-    return CLIENT_MAP.get(domain, "pina")
+def _client_name(email: str, cfg: dict) -> str:
+    """Return the gog client name for the given email.
+
+    Resolution order:
+    1. ``gog_client`` key in config.yaml  (recommended — set this explicitly)
+    2. Domain portion of the email address (fallback, may not match gog's client name)
+    """
+    if cfg.get("gog_client"):
+        return cfg["gog_client"]
+    return email.split("@")[1].split(".")[0]
 
 
-def _load_client_credentials(email: str) -> tuple[str, str]:
-    client = _client_name(email)
+def _load_client_credentials(email: str, cfg: dict) -> tuple[str, str]:
+    client = _client_name(email, cfg)
     creds_path = os.path.expanduser(
         f"~/Library/Application Support/gogcli/credentials-{client}.json"
     )
@@ -119,9 +121,9 @@ def _exchange_refresh_token(client_id: str, client_secret: str, refresh_token: s
     return json.loads(resp.read())
 
 
-def get_credentials(email: str) -> Credentials:
+def get_credentials(email: str, cfg: dict) -> Credentials:
     """Build a google.oauth2.credentials.Credentials object from gog tokens."""
-    client_id, client_secret = _load_client_credentials(email)
+    client_id, client_secret = _load_client_credentials(email, cfg)
     refresh_token = _export_refresh_token(email)
     token_response = _exchange_refresh_token(client_id, client_secret, refresh_token)
     creds = Credentials(
@@ -274,15 +276,16 @@ class TokenExpiredError(Exception):
 
 
 class AuthManager:
-    def __init__(self, email: str):
+    def __init__(self, email: str, cfg: dict):
         self.email = email
+        self._cfg = cfg
         self._creds: Optional[Credentials] = None
         self._gmail_service = None
         self._token_fetched_at: float = 0
 
     def refresh(self) -> None:
         log.info("refreshing OAuth token for %s", self.email)
-        self._creds = get_credentials(self.email)
+        self._creds = get_credentials(self.email, self._cfg)
         self._token_fetched_at = time.time()
         self._gmail_service = build("gmail", "v1", credentials=self._creds)
 
@@ -468,7 +471,7 @@ def run(config_path: str) -> None:
 
     log.info("gohook starting for %s", email)
 
-    auth = AuthManager(email)
+    auth = AuthManager(email, config)
     state = load_state()
 
     # graceful shutdown
