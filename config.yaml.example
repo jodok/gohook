@@ -20,9 +20,6 @@
 # Gmail account to watch
 account: user@example.com
 
-# gog client name — only needed if you use gog for token export (legacy)
-# If using gohook's own OAuth (recommended, via --auth), leave this unset.
-# gog_client: myclient
 
 pubsub:
   project_id: your-gcp-project-id
