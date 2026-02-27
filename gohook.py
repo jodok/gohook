@@ -91,7 +91,19 @@ def run_auth_flow(cfg: dict) -> None:
         print("Set oauth.credentials_file in config.yaml or ensure the gog credentials file exists.")
         sys.exit(1)
 
-    flow = InstalledAppFlow.from_client_secrets_file(creds_file, SCOPES)
+    raw = json.load(open(creds_file))
+    # gog stores bare {client_id, client_secret}; wrap into InstalledAppFlow format
+    if "installed" not in raw and "web" not in raw:
+        client_config = {"installed": {
+            "client_id": raw["client_id"],
+            "client_secret": raw["client_secret"],
+            "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+            "token_uri": "https://oauth2.googleapis.com/token",
+            "redirect_uris": ["http://localhost"],
+        }}
+    else:
+        client_config = raw
+    flow = InstalledAppFlow.from_client_config(client_config, SCOPES)
     creds = flow.run_local_server(port=0)
 
     with open(token_file, "w") as f:
@@ -288,9 +300,12 @@ def labels_match(condition: dict, labels_added: list, labels_removed: list) -> b
 
 
 def render_template(template: str, variables: dict) -> str:
+    import json as _json
     result = template
     for k, v in variables.items():
-        result = result.replace("{{" + k + "}}", str(v))
+        # JSON-encode the value so newlines/quotes/etc. are safe inside a JSON string
+        encoded = _json.dumps(str(v))[1:-1]  # strip surrounding quotes
+        result = result.replace("{{" + k + "}}", encoded)
     return result
 
 
@@ -361,6 +376,7 @@ def process_notification(auth: AuthManager, config: dict, notification: dict,
                 msg_id = change["message"]["id"]
                 added = changed_labels if change_type == "labelsAdded" else []
                 removed = changed_labels if change_type == "labelsRemoved" else []
+                log.debug("label change on %s — added=%s removed=%s", msg_id, added, removed)
 
                 for trigger in config.get("triggers", []):
                     cond = trigger.get("condition", {})
