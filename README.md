@@ -116,7 +116,8 @@ watch:
 | `{{subject}}` | Message subject |
 | `{{from}}` | From header |
 | `{{to}}` | To header |
-| `{{snippet}}` | Message snippet |
+| `{{snippet}}` | Message snippet (short preview) |
+| `{{body}}` | Full plain-text email body (up to 4000 chars) |
 | `{{labels}}` | Comma-separated current labels |
 
 ### Label IDs
@@ -167,6 +168,52 @@ RestartSec=10
 
 [Install]
 WantedBy=multi-user.target
+```
+
+---
+
+---
+
+## OpenClaw Integration
+
+gohook is designed as a Gmail → [OpenClaw](https://openclaw.ai) notification daemon.
+
+When a trigger fires, it POSTs to OpenClaw's agent webhook endpoint:
+
+```
+POST /hooks/agent
+Authorization: Bearer <hooks_token>
+```
+
+The OpenClaw agent (e.g. Tashi) receives the full email content and decides what to do.
+
+**Finding your hooks token:** open `openclaw.json` and look for `hooks.token`.
+
+**Tailscale URL pattern:**
+```
+https://MACHINENAME.TAILNET.ts.net/hooks/agent
+```
+
+See the [OpenClaw webhook docs](https://docs.openclaw.ai/automation/webhook) for full details.
+
+### Example trigger config
+
+```yaml
+triggers:
+  - name: green_flag
+    condition:
+      labels_added: ["^sg"]   # green star label id
+    webhook:
+      url: https://yourhost.tailnet.ts.net/hooks/agent
+      method: POST
+      headers:
+        Authorization: "Bearer YOUR_HOOKS_TOKEN"
+      payload_template: |
+        {
+          "message": "Green-flagged email — handle this:\nFrom: {{from}}\nSubject: {{subject}}\n\n{{body}}",
+          "name": "Gmail",
+          "agentId": "main"
+        }
 ```
 
 ---

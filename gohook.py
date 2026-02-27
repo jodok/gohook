@@ -210,8 +210,7 @@ def get_history(service, email: str, start_history_id: str) -> list[dict]:
 
 def get_message(service, email: str, message_id: str) -> dict:
     msg = service.users().messages().get(
-        userId=email, id=message_id, format="metadata",
-        metadataHeaders=["Subject", "From", "To"]
+        userId=email, id=message_id, format="full",
     ).execute()
     return msg
 
@@ -221,6 +220,50 @@ def extract_header(msg: dict, name: str) -> str:
         if h["name"].lower() == name.lower():
             return h["value"]
     return ""
+
+
+def extract_body(msg: dict, max_chars: int = 4000) -> str:
+    """Extract plain-text body from a Gmail message (format=full).
+
+    Prefers text/plain parts. Falls back to stripping HTML from text/html.
+    Decodes base64url-encoded data. Truncates to max_chars.
+    """
+    import base64
+    import html as html_mod
+    import re as _re
+
+    def _decode(data: str) -> str:
+        # Gmail uses base64url encoding
+        padded = data + "=" * (4 - len(data) % 4)
+        return base64.urlsafe_b64decode(padded).decode("utf-8", errors="replace")
+
+    def _strip_html(raw: str) -> str:
+        # remove tags, collapse whitespace
+        text = _re.sub(r"<[^>]+>", " ", raw)
+        text = html_mod.unescape(text)
+        return _re.sub(r"\s+", " ", text).strip()
+
+    def _walk(part: dict) -> tuple[str, str]:
+        """Return (plain_text, html_text) found in this part tree."""
+        mime = part.get("mimeType", "")
+        body_data = part.get("body", {}).get("data", "")
+
+        if mime == "text/plain" and body_data:
+            return _decode(body_data), ""
+        if mime == "text/html" and body_data:
+            return "", _decode(body_data)
+
+        plain, html = "", ""
+        for sub in part.get("parts", []):
+            p, h = _walk(sub)
+            plain = plain or p
+            html = html or h
+        return plain, html
+
+    payload = msg.get("payload", {})
+    plain, html = _walk(payload)
+    text = plain or (_strip_html(html) if html else msg.get("snippet", ""))
+    return text[:max_chars]
 
 
 # ─── token management ─────────────────────────────────────────────────────────
@@ -372,6 +415,7 @@ def process_notification(auth: AuthManager, config: dict, notification: dict,
                             "to": extract_header(msg, "To"),
                             "snippet": msg.get("snippet", ""),
                             "labels": ",".join(msg.get("labelIds", [])),
+                            "body": extract_body(msg),
                         }
                         fire_webhook(trigger, variables)
 

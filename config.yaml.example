@@ -1,6 +1,19 @@
 # gohook configuration example
 # Copy to config.yaml and fill in your values
 
+# ─── OpenClaw Integration ─────────────────────────────────────────────────────
+# gohook is designed to notify OpenClaw's agent webhook endpoint:
+#
+#   POST /hooks/agent
+#
+# Token: find it in openclaw.json → hooks.token
+#
+# Tailscale URL pattern:
+#   https://MACHINENAME.TAILNET.ts.net/hooks/agent
+#
+# See: https://docs.openclaw.ai/automation/webhook
+# ─────────────────────────────────────────────────────────────────────────────
+
 # Gmail account to watch
 account: jodok.batlogg@pina.earth
 
@@ -15,38 +28,39 @@ pubsub:
 triggers:
   # Each trigger watches for a label condition and fires a webhook
 
-  - name: yellow_star
+  - name: green_flag
     condition:
-      # Labels that must be ADDED in this history event
-      labels_added: ["STARRED"]
-      # Labels that must be REMOVED (optional)
-      # labels_removed: ["UNREAD"]
+      # Gmail internal label id for green star; also try "STARRED" or the actual label id
+      labels_added: ["^sg"]
     webhook:
-      url: https://example.com/webhook
+      url: https://YOUR_OPENCLAW_HOST/hooks/agent
       method: POST
       headers:
-        Authorization: "Bearer YOUR_TOKEN"
-        Content-Type: "application/json"
+        Authorization: "Bearer YOUR_HOOKS_TOKEN"
       # Template variables: {{message_id}}, {{thread_id}}, {{subject}},
-      #                     {{from}}, {{to}}, {{snippet}}, {{labels}}
+      #                     {{from}}, {{to}}, {{snippet}}, {{labels}}, {{body}}
       payload_template: |
         {
-          "event": "yellow_star",
-          "message_id": "{{message_id}}",
-          "subject": "{{subject}}",
-          "from": "{{from}}",
-          "snippet": "{{snippet}}"
+          "message": "Green-flagged email — handle this:\nFrom: {{from}}\nSubject: {{subject}}\n\n{{body}}",
+          "name": "Gmail",
+          "agentId": "main"
         }
 
-  # Another example: trigger on any incoming mail (label INBOX added)
-  # - name: new_inbox_mail
+  # Example: trigger on any starred email (yellow star)
+  # - name: yellow_star
   #   condition:
-  #     labels_added: ["INBOX"]
+  #     labels_added: ["STARRED"]
   #   webhook:
-  #     url: https://example.com/new-mail
+  #     url: https://YOUR_OPENCLAW_HOST/hooks/agent
   #     method: POST
+  #     headers:
+  #       Authorization: "Bearer YOUR_HOOKS_TOKEN"
   #     payload_template: |
-  #       {"event": "new_mail", "from": "{{from}}", "subject": "{{subject}}"}
+  #       {
+  #         "message": "Starred email:\nFrom: {{from}}\nSubject: {{subject}}\n\n{{body}}",
+  #         "name": "Gmail",
+  #         "agentId": "main"
+  #       }
 
 watch:
   # Gmail watch expires after 7 days. Renew this many hours before expiry.
