@@ -2,41 +2,35 @@
 # Copy to config.yaml and fill in your values
 
 # ─── OpenClaw Integration ─────────────────────────────────────────────────────
-# gohook is designed to notify OpenClaw's agent webhook endpoint:
+# gohook notifies OpenClaw's agent webhook endpoint:
 #
 #   POST /hooks/agent
 #
+# Hook naming convention: <agentId>:<event>
+#   name      → identifies the hook type (e.g. "mail:talk-to-my-tashi")
+#   agentId   → which OpenClaw agent handles this (must be in allowedAgentIds)
+#   deliver   → false: silent background processing | true: surface to user
+#   wakeMode  → "now": process immediately | "next-heartbeat": queue for next check
+#
 # Token: find it in openclaw.json → hooks.token
-#
-# Tailscale URL pattern:
-#   https://MACHINENAME.TAILNET.ts.net/hooks/agent
-#
+# Tailscale URL: https://MACHINENAME.TAILNET.ts.net/hooks/agent
 # See: https://docs.openclaw.ai/automation/webhook
 # ─────────────────────────────────────────────────────────────────────────────
 
 # Gmail account to watch
 account: user@example.com
 
-# gog client name for this account (see ~/.config/gog/ or ~/Library/Application Support/gogcli/)
-# Set this explicitly — gohook will try to derive it from the domain if not set,
-# but the derived name may not match your actual gog client identifier.
-gog_client: myclient
 
 pubsub:
-  # GCP project that owns the Pub/Sub topic
   project_id: your-gcp-project-id
-  # Full topic resource name
   topic: projects/your-gcp-project-id/topics/gmail-hook
-  # Full subscription resource name (pull subscription)
   subscription: projects/your-gcp-project-id/subscriptions/gmail-hook-sub
 
 triggers:
-  # Each trigger watches for a label condition and fires a webhook
-
-  - name: green_flag
+  # Trigger on a specific Gmail label (e.g. "talk-to-my-tashi")
+  - name: talk-to-my-tashi
     condition:
-      # Gmail internal label id for green star; also try "STARRED" or the actual label id
-      labels_added: ["^sg"]
+      labels_added: ["Label_15"]   # Gmail label ID — find via Gmail API labels.list
     webhook:
       url: https://YOUR_OPENCLAW_HOST/hooks/agent
       method: POST
@@ -46,35 +40,19 @@ triggers:
       #                     {{from}}, {{to}}, {{snippet}}, {{labels}}, {{body}}
       payload_template: |
         {
-          "message": "Green-flagged email — handle this:\nFrom: {{from}}\nSubject: {{subject}}\n\n{{body}}",
-          "name": "Gmail",
-          "agentId": "YOUR_AGENT_ID"
+          "message": "mail:talk-to-my-tashi\nMessage-ID: {{message_id}}\nFrom: {{from}}\nSubject: {{subject}}\n\n{{body}}",
+          "name": "mail",
+          "agentId": "mail",
+          "deliver": false,
+          "wakeMode": "now"
         }
 
-  # Example: trigger on any starred email (yellow star)
-  # - name: yellow_star
-  #   condition:
-  #     labels_added: ["STARRED"]
-  #   webhook:
-  #     url: https://YOUR_OPENCLAW_HOST/hooks/agent
-  #     method: POST
-  #     headers:
-  #       Authorization: "Bearer YOUR_HOOKS_TOKEN"
-  #     payload_template: |
-  #       {
-  #         "message": "Starred email:\nFrom: {{from}}\nSubject: {{subject}}\n\n{{body}}",
-  #         "name": "Gmail",
-  #         "agentId": "YOUR_AGENT_ID"
-  #       }
-
 watch:
-  # Gmail watch expires after 7 days. Renew this many hours before expiry.
-  # Default: renew every 168 h (7 days) — set lower to renew more aggressively.
   renew_interval_hours: 168
 
 oauth:
-  # Path to gog client credentials file (client_id + client_secret)
-  # Default: ~/Library/Application Support/gogcli/credentials-{gog_client}.json
-  credentials_file: ~/Library/Application Support/gogcli/credentials-pina.json
-  # Where to store the OAuth token (created by --auth)
+  # Path to the OAuth client credentials file (client_id + client_secret)
+  # Download from Google Cloud Console → APIs & Services → Credentials → OAuth 2.0 Client
+  credentials_file: ~/path/to/client_credentials.json
+  # Where gohook stores its token (created once via: python gohook.py --auth)
   token_file: ~/.gohook_token.json

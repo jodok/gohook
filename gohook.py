@@ -68,9 +68,9 @@ def _credentials_file(cfg: dict) -> str:
     oauth_cfg = cfg.get("oauth", {})
     if oauth_cfg.get("credentials_file"):
         return os.path.expanduser(oauth_cfg["credentials_file"])
-    client = cfg.get("gog_client") or cfg.get("account", "").split("@")[1].split(".")[0]
-    return os.path.expanduser(
-        f"~/Library/Application Support/gogcli/credentials-{client}.json"
+    raise ValueError(
+        "oauth.credentials_file is required in config.yaml. "
+        "Download it from Google Cloud Console → APIs & Services → Credentials."
     )
 
 
