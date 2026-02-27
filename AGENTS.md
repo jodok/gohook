@@ -1,6 +1,6 @@
 # AGENTS.md — gohook
 
-gohook is a Gmail → OpenClaw notification daemon. It is NOT a generic webhook proxy.
+gohook is a Gmail -> OpenClaw notification daemon. It is NOT a generic webhook proxy.
 
 > **ALWAYS work inside `.venv`** — see [Development](#development) below.
 
@@ -9,9 +9,15 @@ Subscribe to Gmail via Google Cloud Pub/Sub. When a configured Gmail event occur
 
 ## Architecture
 - Daemon: `gohook.py`
-- Auth: reuses gog's OAuth2 tokens (no separate Google auth setup needed)
+- Auth: gohook manages its own OAuth2 token (Gmail readonly + Pub/Sub scopes). Token stored at `~/.gohook_token.json` (configurable via `oauth.token_file` in config.yaml). Run `python gohook.py --auth` once to authorize via browser flow.
 - Trigger: configurable label changes in `config.yaml`
 - Destination: always OpenClaw `/hooks/agent` endpoint (hardcoded target)
+
+## Auth flow
+1. **First run:** `python gohook.py --auth` - opens browser, saves token to `~/.gohook_token.json`
+2. **Normal run:** token loaded from file, auto-refreshed when expired
+3. **Client credentials:** read from gog's credentials file (`credentials-{gog_client}.json`) or configured via `oauth.credentials_file` in config.yaml
+4. **Scopes:** `gmail.readonly` + `pubsub`
 
 ## OpenClaw Webhook
 Notifications go to OpenClaw's `/hooks/agent` endpoint (POST):
@@ -31,11 +37,12 @@ The agent receives the full email content and decides what to do with it.
 ## Config
 - `config.yaml` — runtime config (not committed, based on `config.yaml.example`)
 - `~/.gohook_state.json` — persisted historyId + watch expiry
+- `~/.gohook_token.json` — OAuth token (created by `--auth`)
 
 ### `gog_client` field
 Set `gog_client` in `config.yaml` to the gog client name that matches your Gmail account.
-This is the identifier gog uses for its credential files (e.g. `credentials-myclient.json`).
-If not set, gohook will attempt to derive it from the email domain, which may not be correct.
+Used to locate the credentials file at `~/Library/Application Support/gogcli/credentials-{gog_client}.json`.
+Override with `oauth.credentials_file` if needed.
 
 ```yaml
 # Recommended: set explicitly
@@ -45,7 +52,7 @@ gog_client: myclient
 ## Key design decisions
 - Full email body is passed to OpenClaw (not just message ID) — avoids extra round-trips and gives the agent immediate context to act
 - Pull-based Pub/Sub (not push) — no public endpoint needed
-- Token auto-refresh via gog CLI
+- gohook owns its own OAuth token with both required scopes (gmail.readonly + pubsub) — previously relied on gog's token which only had gmail scopes, causing 403 on Pub/Sub calls
 
 ## Development
 
