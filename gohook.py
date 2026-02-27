@@ -300,9 +300,12 @@ def labels_match(condition: dict, labels_added: list, labels_removed: list) -> b
 
 
 def render_template(template: str, variables: dict) -> str:
+    import json as _json
     result = template
     for k, v in variables.items():
-        result = result.replace("{{" + k + "}}", str(v))
+        # JSON-encode the value so newlines/quotes/etc. are safe inside a JSON string
+        encoded = _json.dumps(str(v))[1:-1]  # strip surrounding quotes
+        result = result.replace("{{" + k + "}}", encoded)
     return result
 
 
@@ -373,6 +376,7 @@ def process_notification(auth: AuthManager, config: dict, notification: dict,
                 msg_id = change["message"]["id"]
                 added = changed_labels if change_type == "labelsAdded" else []
                 removed = changed_labels if change_type == "labelsRemoved" else []
+                log.debug("label change on %s — added=%s removed=%s", msg_id, added, removed)
 
                 for trigger in config.get("triggers", []):
                     cond = trigger.get("condition", {})
