@@ -10,14 +10,14 @@ Gmail Pub/Sub daemon — watches a Gmail account via Google Cloud Pub/Sub and fi
 4. Matches changes against configured triggers
 5. Renders a payload template and POSTs to your webhook URL
 
-Auth reuses [gog](https://github.com/steipete/gog) OAuth2 tokens — no separate Google auth setup needed.
+Auth: gohook manages its own OAuth2 token (Gmail + Pub/Sub scopes). Run `python gohook.py --auth` once to authorize.
 
 ---
 
 ## Prerequisites
 
 - Python 3.10+
-- `gog` CLI installed and authenticated for the Gmail account
+- `gog` CLI credentials file (client_id + client_secret) — or any Google OAuth2 client credentials JSON
 - A GCP project with Pub/Sub API enabled
 - The Gmail API enabled in the same (or any) GCP project
 
@@ -69,6 +69,9 @@ cd gohook
 pip install -r requirements.txt
 cp config.yaml.example config.yaml
 # edit config.yaml with your project_id, topic, subscription, and triggers
+
+# Step 1: authorize gohook (opens browser, saves token to ~/.gohook_token.json)
+python gohook.py --auth
 ```
 
 ---
@@ -226,9 +229,14 @@ gohook saves its last known Gmail `historyId` to `~/.gohook_state.json`. Delete 
 
 ## Troubleshooting
 
-**`gog auth tokens export` fails** — make sure `gog` is installed and the account is authenticated:
+**Token file missing** — run the auth flow first:
 ```bash
-gog auth list
+python gohook.py --auth
+```
+
+**Token expired / invalid** — re-run the auth flow:
+```bash
+python gohook.py --auth
 ```
 
 **No notifications received** — verify the Pub/Sub subscription exists and the Gmail watch is active. The watch auto-renews every `renew_interval_hours`.

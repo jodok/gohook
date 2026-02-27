@@ -71,3 +71,10 @@ watch:
   # Gmail watch expires after 7 days. Renew this many hours before expiry.
   # Default: renew every 168 h (7 days) — set lower to renew more aggressively.
   renew_interval_hours: 168
+
+oauth:
+  # Path to gog client credentials file (client_id + client_secret)
+  # Default: ~/Library/Application Support/gogcli/credentials-{gog_client}.json
+  credentials_file: ~/Library/Application Support/gogcli/credentials-pina.json
+  # Where to store the OAuth token (created by --auth)
+  token_file: ~/.gohook_token.json

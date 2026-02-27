@@ -3,29 +3,27 @@
 gohook - Gmail Pub/Sub daemon
 Watches Gmail via Google Cloud Pub/Sub and fires webhooks on label changes.
 
-Auth: reuses gog (Google Workspace CLI) OAuth2 tokens — no separate setup needed.
+Auth: gohook manages its own OAuth2 token with Gmail + Pub/Sub scopes.
+Run `python gohook.py --auth` once to authorize.
 """
 
 import json
 import logging
 import os
-import re
 import signal
-import subprocess
 import sys
 import time
-import urllib.parse
-import urllib.request
-from datetime import datetime, timezone
-from typing import Any, Optional
+from typing import Optional
 
 import requests
 import yaml
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
+from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
+from google_auth_oauthlib.flow import InstalledAppFlow
 
-# ─── logging ──────────────────────────────────────────────────────────────────
+# --- logging ------------------------------------------------------------------
 
 logging.basicConfig(
     level=logging.INFO,
@@ -35,7 +33,7 @@ logging.basicConfig(
 )
 log = logging.getLogger("gohook")
 
-# ─── state file ───────────────────────────────────────────────────────────────
+# --- state file ---------------------------------------------------------------
 
 STATE_PATH = os.path.expanduser("~/.gohook_state.json")
 
@@ -58,7 +56,7 @@ def save_state(state: dict) -> None:
         log.error("could not write state file: %s", e)
 
 
-# ─── auth ─────────────────────────────────────────────────────────────────────
+# --- auth ---------------------------------------------------------------------
 
 SCOPES = [
     "https://www.googleapis.com/auth/gmail.readonly",
@@ -66,78 +64,68 @@ SCOPES = [
 ]
 
 
-def _client_name(email: str, cfg: dict) -> str:
-    """Return the gog client name for the given email.
-
-    Resolution order:
-    1. ``gog_client`` key in config.yaml  (recommended — set this explicitly)
-    2. Domain portion of the email address (fallback, may not match gog's client name)
-    """
-    if cfg.get("gog_client"):
-        return cfg["gog_client"]
-    return email.split("@")[1].split(".")[0]
-
-
-def _load_client_credentials(email: str, cfg: dict) -> tuple[str, str]:
-    client = _client_name(email, cfg)
-    creds_path = os.path.expanduser(
+def _credentials_file(cfg: dict) -> str:
+    oauth_cfg = cfg.get("oauth", {})
+    if oauth_cfg.get("credentials_file"):
+        return os.path.expanduser(oauth_cfg["credentials_file"])
+    client = cfg.get("gog_client") or cfg.get("account", "").split("@")[1].split(".")[0]
+    return os.path.expanduser(
         f"~/Library/Application Support/gogcli/credentials-{client}.json"
     )
-    with open(creds_path) as f:
-        creds = json.load(f)
-    return creds["client_id"], creds["client_secret"]
 
 
-def _export_refresh_token(email: str) -> str:
-    tmp = f"/tmp/gohook_token_{os.getpid()}.json"
-    try:
-        subprocess.run(
-            ["gog", "auth", "tokens", "export", email, "--out", tmp],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            check=True,
-        )
-        with open(tmp) as f:
-            return json.load(f)["refresh_token"]
-    finally:
-        if os.path.exists(tmp):
-            os.unlink(tmp)
+def _token_file(cfg: dict) -> str:
+    oauth_cfg = cfg.get("oauth", {})
+    if oauth_cfg.get("token_file"):
+        return os.path.expanduser(oauth_cfg["token_file"])
+    return os.path.expanduser("~/.gohook_token.json")
 
 
-def _exchange_refresh_token(client_id: str, client_secret: str, refresh_token: str) -> dict:
-    """Returns the full token response dict (access_token, expires_in, ...)."""
-    data = urllib.parse.urlencode(
-        {
-            "client_id": client_id,
-            "client_secret": client_secret,
-            "refresh_token": refresh_token,
-            "grant_type": "refresh_token",
-        }
-    ).encode()
-    req = urllib.request.Request(
-        "https://oauth2.googleapis.com/token", data=data, method="POST"
-    )
-    resp = urllib.request.urlopen(req)
-    return json.loads(resp.read())
+def run_auth_flow(cfg: dict) -> None:
+    """Interactive OAuth flow - opens browser, saves token, then exits."""
+    creds_file = _credentials_file(cfg)
+    token_file = _token_file(cfg)
+
+    if not os.path.exists(creds_file):
+        print(f"ERROR: credentials file not found: {creds_file}")
+        print("Set oauth.credentials_file in config.yaml or ensure the gog credentials file exists.")
+        sys.exit(1)
+
+    flow = InstalledAppFlow.from_client_secrets_file(creds_file, SCOPES)
+    creds = flow.run_local_server(port=0)
+
+    with open(token_file, "w") as f:
+        f.write(creds.to_json())
+    print(f"Token saved to {token_file}")
+    print("You can now run gohook normally: python gohook.py")
 
 
-def get_credentials(email: str, cfg: dict) -> Credentials:
-    """Build a google.oauth2.credentials.Credentials object from gog tokens."""
-    client_id, client_secret = _load_client_credentials(email, cfg)
-    refresh_token = _export_refresh_token(email)
-    token_response = _exchange_refresh_token(client_id, client_secret, refresh_token)
-    creds = Credentials(
-        token=token_response["access_token"],
-        refresh_token=refresh_token,
-        token_uri="https://oauth2.googleapis.com/token",
-        client_id=client_id,
-        client_secret=client_secret,
-        scopes=SCOPES,
-    )
+def load_credentials(cfg: dict) -> Credentials:
+    """Load credentials from token_file, refreshing if expired."""
+    token_file = _token_file(cfg)
+
+    if not os.path.exists(token_file):
+        print(f"ERROR: token file not found: {token_file}")
+        print("Run `python gohook.py --auth` once to authorize.")
+        sys.exit(1)
+
+    creds = Credentials.from_authorized_user_file(token_file, SCOPES)
+
+    if not creds.valid:
+        if creds.expired and creds.refresh_token:
+            log.info("refreshing OAuth token")
+            creds.refresh(Request())
+            with open(token_file, "w") as f:
+                f.write(creds.to_json())
+        else:
+            print("ERROR: token is invalid and cannot be refreshed.")
+            print("Run `python gohook.py --auth` to re-authorize.")
+            sys.exit(1)
+
     return creds
 
 
-# ─── config ───────────────────────────────────────────────────────────────────
+# --- config -------------------------------------------------------------------
 
 
 def load_config(path: str) -> dict:
@@ -145,13 +133,12 @@ def load_config(path: str) -> dict:
         return yaml.safe_load(f)
 
 
-# ─── Gmail / Pub/Sub helpers ──────────────────────────────────────────────────
+# --- Gmail / Pub/Sub helpers --------------------------------------------------
 
 
 def gmail_watch(service, email: str, topic: str) -> dict:
-    """Register (or re-register) a Gmail push watch. Returns watch response."""
     body = {
-        "labelIds": ["INBOX"],  # watch all changes; we filter in triggers
+        "labelIds": ["INBOX"],
         "topicName": topic,
     }
     result = service.users().watch(userId=email, body=body).execute()
@@ -161,22 +148,18 @@ def gmail_watch(service, email: str, topic: str) -> dict:
 
 
 def pubsub_pull(project_id: str, subscription: str, creds: Credentials,
-                max_messages: int = 10) -> list[dict]:
-    """Pull messages from a Pub/Sub subscription. Returns list of received messages."""
-    url = (
-        f"https://pubsub.googleapis.com/v1/{subscription}:pull"
-    )
+                max_messages: int = 10) -> list:
+    url = f"https://pubsub.googleapis.com/v1/{subscription}:pull"
     body = {"maxMessages": max_messages, "returnImmediately": False}
     headers = {"Authorization": f"Bearer {creds.token}", "Content-Type": "application/json"}
     resp = requests.post(url, json=body, headers=headers, timeout=35)
     if resp.status_code == 401:
         raise TokenExpiredError("pubsub 401")
     resp.raise_for_status()
-    data = resp.json()
-    return data.get("receivedMessages", [])
+    return resp.json().get("receivedMessages", [])
 
 
-def pubsub_ack(subscription: str, ack_ids: list[str], creds: Credentials) -> None:
+def pubsub_ack(subscription: str, ack_ids: list, creds: Credentials) -> None:
     url = f"https://pubsub.googleapis.com/v1/{subscription}:acknowledge"
     headers = {"Authorization": f"Bearer {creds.token}", "Content-Type": "application/json"}
     resp = requests.post(url, json={"ackIds": ack_ids}, headers=headers, timeout=15)
@@ -184,8 +167,7 @@ def pubsub_ack(subscription: str, ack_ids: list[str], creds: Credentials) -> Non
         log.warning("ack failed: %s %s", resp.status_code, resp.text[:200])
 
 
-def get_history(service, email: str, start_history_id: str) -> list[dict]:
-    """Fetch Gmail history since start_history_id. Returns list of history items."""
+def get_history(service, email: str, start_history_id: str) -> list:
     items = []
     page_token = None
     while True:
@@ -211,10 +193,9 @@ def get_history(service, email: str, start_history_id: str) -> list[dict]:
 
 
 def get_message(service, email: str, message_id: str) -> dict:
-    msg = service.users().messages().get(
+    return service.users().messages().get(
         userId=email, id=message_id, format="full",
     ).execute()
-    return msg
 
 
 def extract_header(msg: dict, name: str) -> str:
@@ -225,36 +206,26 @@ def extract_header(msg: dict, name: str) -> str:
 
 
 def extract_body(msg: dict, max_chars: int = 4000) -> str:
-    """Extract plain-text body from a Gmail message (format=full).
-
-    Prefers text/plain parts. Falls back to stripping HTML from text/html.
-    Decodes base64url-encoded data. Truncates to max_chars.
-    """
     import base64
     import html as html_mod
     import re as _re
 
     def _decode(data: str) -> str:
-        # Gmail uses base64url encoding
         padded = data + "=" * (4 - len(data) % 4)
         return base64.urlsafe_b64decode(padded).decode("utf-8", errors="replace")
 
     def _strip_html(raw: str) -> str:
-        # remove tags, collapse whitespace
         text = _re.sub(r"<[^>]+>", " ", raw)
         text = html_mod.unescape(text)
         return _re.sub(r"\s+", " ", text).strip()
 
-    def _walk(part: dict) -> tuple[str, str]:
-        """Return (plain_text, html_text) found in this part tree."""
+    def _walk(part: dict) -> tuple:
         mime = part.get("mimeType", "")
         body_data = part.get("body", {}).get("data", "")
-
         if mime == "text/plain" and body_data:
             return _decode(body_data), ""
         if mime == "text/html" and body_data:
             return "", _decode(body_data)
-
         plain, html = "", ""
         for sub in part.get("parts", []):
             p, h = _walk(sub)
@@ -268,7 +239,7 @@ def extract_body(msg: dict, max_chars: int = 4000) -> str:
     return text[:max_chars]
 
 
-# ─── token management ─────────────────────────────────────────────────────────
+# --- token management ---------------------------------------------------------
 
 
 class TokenExpiredError(Exception):
@@ -276,22 +247,19 @@ class TokenExpiredError(Exception):
 
 
 class AuthManager:
-    def __init__(self, email: str, cfg: dict):
-        self.email = email
+    def __init__(self, cfg: dict):
         self._cfg = cfg
         self._creds: Optional[Credentials] = None
         self._gmail_service = None
-        self._token_fetched_at: float = 0
 
     def refresh(self) -> None:
-        log.info("refreshing OAuth token for %s", self.email)
-        self._creds = get_credentials(self.email, self._cfg)
-        self._token_fetched_at = time.time()
+        log.info("loading/refreshing OAuth credentials")
+        self._creds = load_credentials(self._cfg)
         self._gmail_service = build("gmail", "v1", credentials=self._creds)
 
     @property
     def creds(self) -> Credentials:
-        if self._creds is None or time.time() - self._token_fetched_at > 3000:
+        if self._creds is None or not self._creds.valid:
             self.refresh()
         return self._creds
 
@@ -306,10 +274,10 @@ class AuthManager:
         self.refresh()
 
 
-# ─── trigger matching & webhook dispatch ──────────────────────────────────────
+# --- trigger matching & webhook dispatch --------------------------------------
 
 
-def labels_match(condition: dict, labels_added: list[str], labels_removed: list[str]) -> bool:
+def labels_match(condition: dict, labels_added: list, labels_removed: list) -> bool:
     req_added = set(condition.get("labels_added", []))
     req_removed = set(condition.get("labels_removed", []))
     if req_added and not req_added.issubset(set(labels_added)):
@@ -333,7 +301,6 @@ def fire_webhook(trigger: dict, variables: dict) -> None:
     headers = dict(wh.get("headers", {}))
     template = wh.get("payload_template", "{}")
     payload_str = render_template(template, variables)
-    # parse as JSON if possible, else send as string
     try:
         payload = json.loads(payload_str)
         is_json = True
@@ -344,7 +311,7 @@ def fire_webhook(trigger: dict, variables: dict) -> None:
     if is_json and "Content-Type" not in headers:
         headers["Content-Type"] = "application/json"
 
-    log.info("firing webhook '%s' → %s %s", trigger["name"], method, url)
+    log.info("firing webhook '%s' -> %s %s", trigger["name"], method, url)
     try:
         if is_json:
             resp = requests.request(method, url, json=payload, headers=headers, timeout=15)
@@ -357,12 +324,11 @@ def fire_webhook(trigger: dict, variables: dict) -> None:
         log.error("webhook '%s' failed: %s", trigger["name"], e)
 
 
-# ─── notification processing ──────────────────────────────────────────────────
+# --- notification processing --------------------------------------------------
 
 
 def process_notification(auth: AuthManager, config: dict, notification: dict,
                           state: dict) -> None:
-    """Process a single decoded Pub/Sub notification."""
     email = notification.get("emailAddress", config["account"])
     new_history_id = notification.get("historyId")
     if not new_history_id:
@@ -400,7 +366,6 @@ def process_notification(auth: AuthManager, config: dict, notification: dict,
                     cond = trigger.get("condition", {})
                     if labels_match(cond, added, removed):
                         log.info("trigger '%s' matched on message %s", trigger["name"], msg_id)
-                        # fetch message details
                         try:
                             msg = get_message(auth.gmail, email, msg_id)
                         except HttpError as e:
@@ -422,16 +387,14 @@ def process_notification(auth: AuthManager, config: dict, notification: dict,
                         }
                         fire_webhook(trigger, variables)
 
-    # update state to the new historyId
     state["history_id"] = new_history_id
     save_state(state)
 
 
-# ─── watch renewal ────────────────────────────────────────────────────────────
+# --- watch renewal ------------------------------------------------------------
 
 
 def maybe_renew_watch(auth: AuthManager, config: dict, state: dict) -> None:
-    """Renew Gmail watch if it's due."""
     interval_hours = config.get("watch", {}).get("renew_interval_hours", 168)
     interval_sec = interval_hours * 3600
     last_watch = state.get("last_watch_at", 0)
@@ -444,7 +407,6 @@ def maybe_renew_watch(auth: AuthManager, config: dict, state: dict) -> None:
     try:
         result = gmail_watch(auth.gmail, email, topic)
         state["last_watch_at"] = time.time()
-        # only update stored historyId if we don't have one yet
         if not state.get("history_id"):
             state["history_id"] = result.get("historyId")
         save_state(state)
@@ -460,7 +422,7 @@ def maybe_renew_watch(auth: AuthManager, config: dict, state: dict) -> None:
             log.error("gmail watch failed: %s", e)
 
 
-# ─── main loop ────────────────────────────────────────────────────────────────
+# --- main loop ----------------------------------------------------------------
 
 
 def run(config_path: str) -> None:
@@ -471,10 +433,9 @@ def run(config_path: str) -> None:
 
     log.info("gohook starting for %s", email)
 
-    auth = AuthManager(email, config)
+    auth = AuthManager(config)
     state = load_state()
 
-    # graceful shutdown
     _running = [True]
 
     def _stop(sig, frame):
@@ -484,23 +445,19 @@ def run(config_path: str) -> None:
     signal.signal(signal.SIGTERM, _stop)
     signal.signal(signal.SIGINT, _stop)
 
-    # initial watch registration
     maybe_renew_watch(auth, config, state)
 
     log.info("entering pull loop (subscription: %s)", subscription)
 
     while _running[0]:
-        # renew watch if due
         maybe_renew_watch(auth, config, state)
 
-        # pull messages
         try:
             messages = pubsub_pull(project_id, subscription, auth.creds, max_messages=10)
         except TokenExpiredError:
             auth.handle_401()
             continue
         except requests.exceptions.Timeout:
-            # long-poll timeout is normal, just loop
             continue
         except Exception as e:
             log.error("pubsub pull error: %s", e)
@@ -535,7 +492,6 @@ def run(config_path: str) -> None:
             except Exception as e:
                 log.error("error processing notification: %s", e)
 
-        # ack all pulled messages
         try:
             pubsub_ack(subscription, ack_ids, auth.creds)
         except Exception as e:
@@ -544,7 +500,7 @@ def run(config_path: str) -> None:
     log.info("gohook stopped")
 
 
-# ─── entrypoint ───────────────────────────────────────────────────────────────
+# --- entrypoint ---------------------------------------------------------------
 
 
 def main():
@@ -559,6 +515,10 @@ def main():
     parser.add_argument(
         "--debug", action="store_true", help="enable debug logging"
     )
+    parser.add_argument(
+        "--auth", action="store_true",
+        help="run OAuth2 authorization flow (opens browser), save token, then exit",
+    )
     args = parser.parse_args()
 
     if args.debug:
@@ -567,6 +527,12 @@ def main():
     if not os.path.exists(args.config):
         log.error("config file not found: %s", args.config)
         sys.exit(1)
+
+    config = load_config(args.config)
+
+    if args.auth:
+        run_auth_flow(config)
+        sys.exit(0)
 
     run(args.config)
 
