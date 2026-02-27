@@ -1,0 +1,73 @@
+# gohook configuration example
+# Copy to config.yaml and fill in your values
+
+# ─── OpenClaw Integration ─────────────────────────────────────────────────────
+# gohook is designed to notify OpenClaw's agent webhook endpoint:
+#
+#   POST /hooks/agent
+#
+# Token: find it in openclaw.json → hooks.token
+#
+# Tailscale URL pattern:
+#   https://MACHINENAME.TAILNET.ts.net/hooks/agent
+#
+# See: https://docs.openclaw.ai/automation/webhook
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Gmail account to watch
+account: user@example.com
+
+# gog client name for this account (see ~/.config/gog/ or ~/Library/Application Support/gogcli/)
+# Set this explicitly — gohook will try to derive it from the domain if not set,
+# but the derived name may not match your actual gog client identifier.
+gog_client: myclient
+
+pubsub:
+  # GCP project that owns the Pub/Sub topic
+  project_id: your-gcp-project-id
+  # Full topic resource name
+  topic: projects/your-gcp-project-id/topics/gmail-hook
+  # Full subscription resource name (pull subscription)
+  subscription: projects/your-gcp-project-id/subscriptions/gmail-hook-sub
+
+triggers:
+  # Each trigger watches for a label condition and fires a webhook
+
+  - name: green_flag
+    condition:
+      # Gmail internal label id for green star; also try "STARRED" or the actual label id
+      labels_added: ["^sg"]
+    webhook:
+      url: https://YOUR_OPENCLAW_HOST/hooks/agent
+      method: POST
+      headers:
+        Authorization: "Bearer YOUR_HOOKS_TOKEN"
+      # Template variables: {{message_id}}, {{thread_id}}, {{subject}},
+      #                     {{from}}, {{to}}, {{snippet}}, {{labels}}, {{body}}
+      payload_template: |
+        {
+          "message": "Green-flagged email — handle this:\nFrom: {{from}}\nSubject: {{subject}}\n\n{{body}}",
+          "name": "Gmail",
+          "agentId": "YOUR_AGENT_ID"
+        }
+
+  # Example: trigger on any starred email (yellow star)
+  # - name: yellow_star
+  #   condition:
+  #     labels_added: ["STARRED"]
+  #   webhook:
+  #     url: https://YOUR_OPENCLAW_HOST/hooks/agent
+  #     method: POST
+  #     headers:
+  #       Authorization: "Bearer YOUR_HOOKS_TOKEN"
+  #     payload_template: |
+  #       {
+  #         "message": "Starred email:\nFrom: {{from}}\nSubject: {{subject}}\n\n{{body}}",
+  #         "name": "Gmail",
+  #         "agentId": "YOUR_AGENT_ID"
+  #       }
+
+watch:
+  # Gmail watch expires after 7 days. Renew this many hours before expiry.
+  # Default: renew every 168 h (7 days) — set lower to renew more aggressively.
+  renew_interval_hours: 168
